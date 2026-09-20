@@ -74,6 +74,16 @@
     max-width: 80vw; text-align: center;
   }
   #note[hidden] { display: none; }
+
+  /* Source link + credit. z-index sits above #overlay so it's readable on the
+     landing screen, and :fullscreen hides it once you're actually watching. */
+  #credit {
+    position: fixed; bottom: 9px; right: 12px; z-index: 15;
+    font-size: 12px; color: #6e6e73;
+  }
+  #credit a { color: #8a8a8e; text-decoration: none; }
+  #credit a:hover { color: #f2f2f2; text-decoration: underline; }
+  html:fullscreen #credit { display: none; }
 </style>
 </head>
 <body>
@@ -100,6 +110,13 @@
 </div>
 
 <div id="note" hidden></div>
+
+<div id="credit">
+  <a href="https://github.com/Dulani/fullscreenwebcam"
+     target="_blank" rel="noopener noreferrer">Dulani/fullscreenwebcam &#8599;</a>
+  &middot; built with <a href="https://claude.com/claude-code"
+     target="_blank" rel="noopener noreferrer">Claude Code</a> (Opus 5)
+</div>
 
 </div><!-- /#stage -->
 

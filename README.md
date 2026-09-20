@@ -3,6 +3,8 @@
 A one-file static page that shows a USB webcam fullscreen. No tests, no ads, no
 build step, no dependencies — just `getUserMedia` piped into a `<video>` element.
 
+Live at **<https://dulani.github.io/fullscreenwebcam/>**
+
 ## Use
 
 1. Open the page.
@@ -60,3 +62,8 @@ fine because `http://localhost` counts as secure.)
   correctly. A literal vertical flip (`scaleY(-1)`) would leave all text as
   mirror-writing — which is why it isn't that. **Flip** and **Mirror** are
   independent and compose.
+
+## Credits
+
+Built by [Dulani Woods](https://github.com/Dulani) with
+[Claude Code](https://claude.com/claude-code) (Opus 5).
