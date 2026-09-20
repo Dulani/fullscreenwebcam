@@ -16,6 +16,7 @@ browsers require a user gesture for that and there's no way around it.
 | Key | Action |
 | --- | --- |
 | `f` | toggle fullscreen (or double-click the video) |
+| `r` | rotate 180° — for tent / A-frame mode on a convertible |
 | `m` | mirror horizontally |
 | `z` | fill the screen — crops the edges instead of letterboxing |
 | `n` | next camera |
@@ -53,3 +54,9 @@ fine because `http://localhost` counts as secure.)
 - If the webcam is unplugged and replugged, the page reconnects to it.
 - Default is `object-fit: contain`, which letterboxes rather than distorting or
   cropping. Press `z` if you'd rather fill the screen.
+- **Flip** (`r`) is a 180° *rotation*, not a vertical mirror. Use it when a
+  convertible laptop is folded into tent / A-frame mode, where the display
+  itself is upside down. It turns the toolbar along with the video, so both read
+  correctly. A literal vertical flip (`scaleY(-1)`) would leave all text as
+  mirror-writing — which is why it isn't that. **Flip** and **Mirror** are
+  independent and compose.

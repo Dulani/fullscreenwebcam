@@ -11,6 +11,13 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   body { font: 15px/1.45 system-ui, -apple-system, sans-serif; color: #f2f2f2; }
 
+  /* Everything lives in #stage so "flip" can rotate the feed AND the controls
+     together — in tent/A-frame mode the whole display is upside down, so the
+     toolbar needs turning too. rotate(180deg), not scaleY(-1): a true vertical
+     mirror would render all text as mirror-writing. */
+  #stage { position: fixed; inset: 0; }
+  #stage.flip { transform: rotate(180deg); }
+
   /* The feed. object-fit: contain = letterbox, never crop. */
   #view {
     position: fixed; inset: 0; display: block;
@@ -70,12 +77,14 @@
 </style>
 </head>
 <body>
+<div id="stage">
 
 <video id="view" autoplay muted playsinline disablepictureinpicture></video>
 
 <div id="bar">
   <select id="picker" title="Camera" aria-label="Camera"></select>
   <span id="spacer"></span>
+  <button id="flipBtn"   aria-pressed="false" title="Rotate 180° for tent / A-frame mode (r)">Flip</button>
   <button id="mirrorBtn" aria-pressed="false" title="Mirror (m)">Mirror</button>
   <button id="fillBtn"   aria-pressed="false" title="Fill screen, crops edges (z)">Fill</button>
   <button id="fsBtn"     title="Fullscreen (f)">Fullscreen</button>
@@ -84,22 +93,26 @@
 <div id="overlay">
   <button id="start">Start camera</button>
   <p id="hint">
-    <kbd>f</kbd> fullscreen &nbsp; <kbd>m</kbd> mirror &nbsp; <kbd>z</kbd> fill &nbsp;
-    <kbd>n</kbd> next camera &nbsp; <kbd>Esc</kbd> exit<br>
+    <kbd>f</kbd> fullscreen &nbsp; <kbd>r</kbd> rotate 180° &nbsp; <kbd>m</kbd> mirror &nbsp;
+    <kbd>z</kbd> fill &nbsp; <kbd>n</kbd> next camera &nbsp; <kbd>Esc</kbd> exit<br>
     Double-click the video to toggle fullscreen.
   </p>
 </div>
 
 <div id="note" hidden></div>
 
+</div><!-- /#stage -->
+
 <script>
 'use strict';
 
+const stage   = document.getElementById('stage');
 const view    = document.getElementById('view');
 const picker  = document.getElementById('picker');
 const overlay = document.getElementById('overlay');
 const startBtn= document.getElementById('start');
 const noteEl  = document.getElementById('note');
+const flipBtn   = document.getElementById('flipBtn');
 const mirrorBtn = document.getElementById('mirrorBtn');
 const fillBtn   = document.getElementById('fillBtn');
 const fsBtn     = document.getElementById('fsBtn');
@@ -211,16 +224,22 @@ function showError(err) {
 
 /* ---------- view options ---------- */
 
-function setOpt(key, btn, cls, on) {
-  view.classList.toggle(cls, on);
+function setOpt(key, btn, el, cls, on) {
+  el.classList.toggle(cls, on);
   btn.setAttribute('aria-pressed', String(on));
   store.set(key, on ? '1' : '0');
 }
-const toggleMirror = () => setOpt('mirror', mirrorBtn, 'mirror', !view.classList.contains('mirror'));
-const toggleFill   = () => setOpt('fill',   fillBtn,   'fill',   !view.classList.contains('fill'));
+const toggle = (key, btn, el, cls) =>
+  setOpt(key, btn, el, cls, !el.classList.contains(cls));
 
-setOpt('mirror', mirrorBtn, 'mirror', store.get('mirror') === '1');
-setOpt('fill',   fillBtn,   'fill',   store.get('fill')   === '1');
+// Flip turns the whole stage (feed + toolbar); mirror only flips the feed.
+const toggleFlip   = () => toggle('flip',   flipBtn,   stage, 'flip');
+const toggleMirror = () => toggle('mirror', mirrorBtn, view,  'mirror');
+const toggleFill   = () => toggle('fill',   fillBtn,   view,  'fill');
+
+setOpt('flip',   flipBtn,   stage, 'flip',   store.get('flip')   === '1');
+setOpt('mirror', mirrorBtn, view,  'mirror', store.get('mirror') === '1');
+setOpt('fill',   fillBtn,   view,  'fill',   store.get('fill')   === '1');
 
 /* ---------- fullscreen ---------- */
 
@@ -258,6 +277,7 @@ startBtn.addEventListener('click', async () => {
 });
 
 picker.addEventListener('change', () => start(picker.value).catch(showError));
+flipBtn.addEventListener('click', toggleFlip);
 mirrorBtn.addEventListener('click', toggleMirror);
 fillBtn.addEventListener('click', toggleFill);
 fsBtn.addEventListener('click', toggleFull);
@@ -269,6 +289,7 @@ addEventListener('keydown', e => {
   if (e.target instanceof Element && e.target.closest('select, input, textarea')) return;
   const k = e.key.toLowerCase();
   if (k === 'f') { toggleFull(); }
+  else if (k === 'r') { toggleFlip(); }
   else if (k === 'm') { toggleMirror(); }
   else if (k === 'z') { toggleFill(); }
   else if (k === 'n') { nextCamera(); }
