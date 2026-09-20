@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  body { font: 15px/1.45 system-ui, -apple-system, sans-serif; color: #f2f2f2; }
+
+  /* The feed. object-fit: contain = letterbox, never crop. */
+  #view {
+    position: fixed; inset: 0; display: block;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+  #view.fill   { object-fit: cover; }
+  #view.mirror { transform: scaleX(-1); }
+
+  body.idle { cursor: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 10px;
+    background: linear-gradient(rgba(0,0,0,.72), rgba(0,0,0,0));
+    transition: opacity .25s ease;
+  }
+  body.idle #bar { opacity: 0; pointer-events: none; }
+
+  select, button {
+    font: inherit; color: #f2f2f2;
+    background: rgba(28,28,30,.92);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 8px; padding: 7px 11px; cursor: pointer;
+    max-width: 46vw; text-overflow: ellipsis;
+  }
+  button:hover, select:hover { background: rgba(58,58,62,.95); }
+  button[aria-pressed="true"] { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+  #spacer { flex: 1; }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; gap: 18px;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,.82); text-align: center; padding: 24px;
+  }
+  #overlay[hidden] { display: none; }
+  #start {
+    font-size: 19px; padding: 15px 30px; border-radius: 12px;
+    background: #f2f2f2; color: #111; border-color: #f2f2f2; font-weight: 600;
+  }
+  #hint { color: #9a9a9e; font-size: 13px; max-width: 34em; }
+  kbd {
+    font: inherit; font-size: .9em; background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.2); border-radius: 4px; padding: 1px 5px;
+  }
+
+  #note {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    z-index: 20; padding: 10px 16px; border-radius: 8px;
+    background: rgba(28,28,30,.95); border: 1px solid rgba(255,255,255,.18);
+    max-width: 80vw; text-align: center;
+  }
+  #note[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<video id="view" autoplay muted playsinline disablepictureinpicture></video>
+
+<div id="bar">
+  <select id="picker" title="Camera" aria-label="Camera"></select>
+  <span id="spacer"></span>
+  <button id="mirrorBtn" aria-pressed="false" title="Mirror (m)">Mirror</button>
+  <button id="fillBtn"   aria-pressed="false" title="Fill screen, crops edges (z)">Fill</button>
+  <button id="fsBtn"     title="Fullscreen (f)">Fullscreen</button>
+</div>
+
+<div id="overlay">
+  <button id="start">Start camera</button>
+  <p id="hint">
+    <kbd>f</kbd> fullscreen &nbsp; <kbd>m</kbd> mirror &nbsp; <kbd>z</kbd> fill &nbsp;
+    <kbd>n</kbd> next camera &nbsp; <kbd>Esc</kbd> exit<br>
+    Double-click the video to toggle fullscreen.
+  </p>
+</div>
+
+<div id="note" hidden></div>
+
+<script>
+'use strict';
+
+const view    = document.getElementById('view');
+const picker  = document.getElementById('picker');
+const overlay = document.getElementById('overlay');
+const startBtn= document.getElementById('start');
+const noteEl  = document.getElementById('note');
+const mirrorBtn = document.getElementById('mirrorBtn');
+const fillBtn   = document.getElementById('fillBtn');
+const fsBtn     = document.getElementById('fsBtn');
+
+const store = {
+  get(k, d = null) { try { return localStorage.getItem('cam.' + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('cam.' + k, v); } catch {} },
+};
+
+let stream = null;
+let wakeLock = null;
+let noteTimer = 0;
+
+function note(text, ms = 2600) {
+  clearTimeout(noteTimer);
+  if (!text) { noteEl.hidden = true; return; }
+  noteEl.textContent = text;
+  noteEl.hidden = false;
+  if (ms) noteTimer = setTimeout(() => { noteEl.hidden = true; }, ms);
+}
+
+/* ---------- camera ---------- */
+
+function stop() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  view.srcObject = null;
+}
+
+async function start(deviceId) {
+  stop();
+
+  const constraints = {
+    width:  { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30 },
+  };
+  if (deviceId) constraints.deviceId = { exact: deviceId };
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+  } catch (err) {
+    // Saved camera is gone (unplugged, or renamed device id) — fall back to the default one.
+    if (deviceId && ['OverconstrainedError', 'NotFoundError', 'NotReadableError'].includes(err.name)) {
+      return start(null);
+    }
+    throw err;
+  }
+
+  view.srcObject = stream;
+  await view.play().catch(() => {});
+
+  const track = stream.getVideoTracks()[0];
+  const id = track.getSettings().deviceId;
+  if (id) store.set('deviceId', id);
+  track.addEventListener('ended', () => note('Camera disconnected.', 0));
+
+  await refreshDevices();
+  keepAwake();
+  note(null);
+  return stream;
+}
+
+async function refreshDevices() {
+  const cams = (await navigator.mediaDevices.enumerateDevices())
+    .filter(d => d.kind === 'videoinput');
+  const current = stream?.getVideoTracks()[0]?.getSettings().deviceId ?? '';
+
+  picker.replaceChildren(...cams.map((d, i) => {
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.textContent = d.label || `Camera ${i + 1}`;
+    return o;
+  }));
+  picker.value = current;
+  picker.hidden = cams.length < 2;
+}
+
+async function nextCamera() {
+  if (picker.options.length < 2) return;
+  const next = (picker.selectedIndex + 1) % picker.options.length;
+  picker.selectedIndex = next;
+  await start(picker.value).catch(showError);
+}
+
+/* Keep the Chromebook screen from dimming while we're monitoring. */
+async function keepAwake() {
+  if (!('wakeLock' in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && stream) keepAwake();
+});
+
+function showError(err) {
+  const map = {
+    NotAllowedError: 'Camera access blocked. Click the camera icon in the address bar to allow it, then reload.',
+    NotFoundError:   'No camera found. Plug in the USB webcam and reload.',
+    NotReadableError:'Camera is busy — another app or tab is using it.',
+    TrackStartError: 'Camera is busy — another app or tab is using it.',
+  };
+  note(map[err?.name] || ('Camera error: ' + (err?.message || err)), 0);
+  overlay.hidden = false;
+  startBtn.textContent = 'Retry';
+}
+
+/* ---------- view options ---------- */
+
+function setOpt(key, btn, cls, on) {
+  view.classList.toggle(cls, on);
+  btn.setAttribute('aria-pressed', String(on));
+  store.set(key, on ? '1' : '0');
+}
+const toggleMirror = () => setOpt('mirror', mirrorBtn, 'mirror', !view.classList.contains('mirror'));
+const toggleFill   = () => setOpt('fill',   fillBtn,   'fill',   !view.classList.contains('fill'));
+
+setOpt('mirror', mirrorBtn, 'mirror', store.get('mirror') === '1');
+setOpt('fill',   fillBtn,   'fill',   store.get('fill')   === '1');
+
+/* ---------- fullscreen ---------- */
+
+const goFull  = () => document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+const toggleFull = () => document.fullscreenElement ? document.exitFullscreen() : goFull();
+document.addEventListener('fullscreenchange', () => {
+  fsBtn.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+});
+
+/* ---------- idle / auto-hide chrome ---------- */
+
+let idleTimer = 0;
+function wake() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+}
+['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach(
+  e => addEventListener(e, wake, { passive: true }));
+wake();
+
+/* ---------- wiring ---------- */
+
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  try {
+    if (!stream) await start(store.get('deviceId'));
+    await goFull();
+    overlay.hidden = true;
+  } catch (err) {
+    showError(err);
+  } finally {
+    startBtn.disabled = false;
+  }
+});
+
+picker.addEventListener('change', () => start(picker.value).catch(showError));
+mirrorBtn.addEventListener('click', toggleMirror);
+fillBtn.addEventListener('click', toggleFill);
+fsBtn.addEventListener('click', toggleFull);
+view.addEventListener('dblclick', toggleFull);
+
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // Don't steal keys from the camera dropdown while it has focus.
+  if (e.target instanceof Element && e.target.closest('select, input, textarea')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'f') { toggleFull(); }
+  else if (k === 'm') { toggleMirror(); }
+  else if (k === 'z') { toggleFill(); }
+  else if (k === 'n') { nextCamera(); }
+  else return;
+  e.preventDefault();
+});
+
+navigator.mediaDevices?.addEventListener('devicechange', () => {
+  if (!stream) return;
+  const live = stream.getVideoTracks()[0]?.readyState === 'live';
+  live ? refreshDevices() : start(store.get('deviceId')).catch(showError);
+});
+
+/* If permission was already granted on a previous visit, get the feed running
+   immediately. Fullscreen still needs the click (browsers require a gesture). */
+(async () => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return note('This browser does not support camera access.', 0);
+  }
+  try {
+    const p = await navigator.permissions?.query({ name: 'camera' });
+    if (p?.state !== 'granted') return;
+    await start(store.get('deviceId'));
+    startBtn.textContent = 'Go fullscreen';
+  } catch { /* leave the manual Start button in place */ }
+})();
+</script>
+</body>
+</html>
